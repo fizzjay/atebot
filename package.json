@@ -10,6 +10,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "att-client": "^0.5.3"
+    "att-client": "^0.5.3",
+    "node-fetch": "^3.3.2",
+    "ws": "^8.18.3"
   }
 }
