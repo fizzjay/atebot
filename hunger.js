@@ -879,6 +879,8 @@ setInterval(async () => {
 console.log('[STARLIGHT ABILITY] Loaded successfully');
 // ==================== COMBAT SYSTEM ====================
 const combatHitCooldowns = {}; // "attacker-target" => timestamp
+const combatAgreements = {}; // "player1-player2" => { expires: timestamp, initiated: bool }
+const COMBAT_DURATION = 10 * 60 * 1000; // 10 minutes
 
 function calculateDistanceCombat(a, b) {
   if (!a || !b) return Infinity;
@@ -887,6 +889,26 @@ function calculateDistanceCombat(a, b) {
     (a[1] - b[1]) ** 2 +
     (a[2] - b[2]) ** 2
   );
+}
+
+function getCombatKey(player1, player2) {
+  // Always sort alphabetically to ensure consistent key
+  return [player1, player2].sort().join('-');
+}
+
+function canFight(player1, player2) {
+  const key = getCombatKey(player1, player2);
+  const agreement = combatAgreements[key];
+  
+  if (!agreement) return false;
+  
+  const now = Date.now();
+  if (now > agreement.expires) {
+    delete combatAgreements[key];
+    return false;
+  }
+  
+  return true;
 }
 
 function getPlayerLimbs(player) {
@@ -950,12 +972,63 @@ setInterval(async () => {
     const players = res.data?.Result || [];
     const now = Date.now();
     
+    // === PHASE 1: Check for combat initiation (mutual face touching) ===
+    for (const player1 of players) {
+      const p1Name = player1.username;
+      if (!p1Name || !authorizedUsers.has(p1Name)) continue;
+      
+      const p1LH = player1.LeftHandPosition;
+      const p1RH = player1.RightHandPosition;
+      if (!p1LH || !p1RH) continue;
+      
+      for (const player2 of players) {
+        const p2Name = player2.username;
+        if (!p2Name || p2Name === p1Name || !authorizedUsers.has(p2Name)) continue;
+        
+        const p2Head = player2.HeadPosition;
+        const p2LH = player2.LeftHandPosition;
+        const p2RH = player2.RightHandPosition;
+        if (!p2Head || !p2LH || !p2RH) continue;
+        
+        // Check if player1's hand is touching player2's face
+        const p1TouchingP2Face = (
+          calculateDistanceCombat(p1LH, p2Head) < 0.3 ||
+          calculateDistanceCombat(p1RH, p2Head) < 0.3
+        );
+        
+        // Check if player2's hand is touching player1's face
+        const p1Head = player1.HeadPosition;
+        if (!p1Head) continue;
+        
+        const p2TouchingP1Face = (
+          calculateDistanceCombat(p2LH, p1Head) < 0.3 ||
+          calculateDistanceCombat(p2RH, p1Head) < 0.3
+        );
+        
+        // Both players touching each other's faces = mutual consent!
+        if (p1TouchingP2Face && p2TouchingP1Face) {
+          const key = getCombatKey(p1Name, p2Name);
+          
+          if (!combatAgreements[key] || now > combatAgreements[key].expires) {
+            // Start new combat agreement
+            combatAgreements[key] = {
+              expires: now + COMBAT_DURATION,
+              initiated: true
+            };
+            
+            await connection.send(`player message "${p1Name}" "⚔️ Combat started with ${p2Name} for 10 minutes!" 5`);
+            await connection.send(`player message "${p2Name}" "⚔️ Combat started with ${p1Name} for 10 minutes!" 5`);
+            
+            console.log(`[COMBAT] ${p1Name} and ${p2Name} started combat session`);
+          }
+        }
+      }
+    }
+    
+    // === PHASE 2: Process combat hits (only between consenting players) ===
     for (const attacker of players) {
       const attackerName = attacker.username;
-      if (!attackerName) continue;
-      
-      // Check if user is authorized (picked up smelter gem 1)
-      if (!authorizedUsers.has(attackerName)) continue;
+      if (!attackerName || !authorizedUsers.has(attackerName)) continue;
       
       const attackerLH = attacker.LeftHandPosition;
       const attackerRH = attacker.RightHandPosition;
@@ -964,10 +1037,13 @@ setInterval(async () => {
       
       if (!attackerLH || !attackerRH) continue;
       
-      // Scan ALL other players for hits with BOTH hands
+      // Scan for valid combat targets
       for (const target of players) {
         const targetName = target.username;
         if (!targetName || targetName === attackerName) continue;
+        
+        // Check if these two players can fight
+        if (!canFight(attackerName, targetName)) continue;
         
         // Get all limb hitboxes for target
         const targetLimbs = getPlayerLimbs(target);
@@ -1025,13 +1101,23 @@ setInterval(async () => {
         }
       }
     }
+    
+    // Clean up expired agreements
+    for (const key in combatAgreements) {
+      if (now > combatAgreements[key].expires) {
+        const [p1, p2] = key.split('-');
+        console.log(`[COMBAT] Combat session expired between ${p1} and ${p2}`);
+        delete combatAgreements[key];
+      }
+    }
+    
   } catch (e) {
     console.error('[COMBAT ERROR]', e.message);
   }
-}, 20); // Check every 50ms (20 times per second) for responsive combat
+}, 20); // Check every 20ms for responsive combat
 
-console.log('[COMBAT SYSTEM] Loaded - directional punching enabled!');
-// ==================== TAVERN CONTROL SYSTEM ====================
+console.log('[COMBAT SYSTEM] Loaded - mutual consent combat enabled!');
+//=============== TAVERN CONTROL SYSTEM ====================
 const TAVERN_BOUNDS = {
   corner1: [-820.584, 134.652, 3.898],
   corner2: [-790.43, 134.652, 4.882],
