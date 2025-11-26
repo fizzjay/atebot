@@ -1,0 +1,29 @@
+name: Continuous Hunger Bot
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '*/5 * * * *' # runs every 5 minutes, ensures restart if crashed
+
+jobs:
+  run-hunger:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run hunger.js
+        run: |
+          echo "Starting hunger.js..."
+          node hunger.js || echo "hunger.js crashed, will retry in 5 minutes"
